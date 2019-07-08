@@ -41,12 +41,10 @@ impl FileWatcher {
         } else {
             false
         };
-//use std::io::Write;
+
         if too_old {
-            //println!("too old: {:?}",path); std::io::stdout().flush().unwrap();
             assert!(rdr.seek(io::SeekFrom::End(0)).is_ok());
         } else {
-            //println!("not old: {:?}",path); std::io::stdout().flush().unwrap();
             assert!(rdr.seek(io::SeekFrom::Start(file_position)).is_ok());
         }
 
