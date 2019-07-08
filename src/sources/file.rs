@@ -1,6 +1,6 @@
 use crate::event::{self, Event};
 use bytes::Bytes;
-use file_source::file_server::FileServer;
+use file_source::FileServer;
 use futures::{future, sync::mpsc, Future, Sink};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -21,6 +21,8 @@ pub struct FileConfig {
     pub fingerprint_bytes: usize,
     pub ignored_header_bytes: usize,
     pub host_key: Option<String>,
+    //    #[serde(default)]
+    //    pub data_dir: Option<PathBuf>,
 }
 
 fn default_max_line_bytes() -> usize {
@@ -138,19 +140,33 @@ mod tests {
     use super::*;
     use crate::event;
     use crate::sources::file;
-    use crate::test_util::shutdown_on_idle;
+    use crate::test_util::{block_on, shutdown_on_idle};
     use futures::{Future, Stream};
     use std::collections::HashSet;
     use std::fs::{self, File};
     use std::io::{Seek, Write};
     use stream_cancel::Tripwire;
     use tempfile::tempdir;
+    use tokio::util::FutureExt;
 
     fn test_default_file_config() -> file::FileConfig {
         file::FileConfig {
             fingerprint_bytes: 8,
+            //data_dir: tempdir().ok(),
             ..Default::default()
         }
+    }
+
+    fn wait_with_timeout<F, R, E>(future: F) -> R
+    where
+        F: Send + 'static + Future<Item = R, Error = E>,
+        R: Send + 'static,
+        E: Send + 'static + std::fmt::Debug,
+    {
+        let result = block_on(future.timeout(Duration::from_secs(5)));
+        assert!(result.is_ok(),
+                "Unclosed channel: may indicate file-server could not shutdown gracefully.");
+        result.unwrap()
     }
 
     #[test]
@@ -171,7 +187,8 @@ mod tests {
 
     #[test]
     fn file_happy_path() {
-        let (tx, rx) = futures::sync::mpsc::channel(10);
+        let n = 5;
+        let (tx, rx) = futures::sync::mpsc::channel(2 * n);
         let (trigger, tripwire) = Tripwire::new();
 
         let dir = tempdir().unwrap();
@@ -188,7 +205,6 @@ mod tests {
 
         let path1 = dir.path().join("file1");
         let path2 = dir.path().join("file2");
-        let n = 5;
         let mut file1 = File::create(&path1).unwrap();
         let mut file2 = File::create(&path2).unwrap();
 
@@ -199,9 +215,12 @@ mod tests {
             writeln!(&mut file2, "goodbye {}", i).unwrap();
         }
 
-        let received = rx.take(n * 2).collect().wait().unwrap();
+        sleep();
+
         drop(trigger);
         shutdown_on_idle(rt);
+
+        let received = wait_with_timeout(rx.collect());
 
         let mut hello_i = 0;
         let mut goodbye_i = 0;
@@ -230,7 +249,8 @@ mod tests {
 
     #[test]
     fn file_truncate() {
-        let (tx, rx) = futures::sync::mpsc::channel(10);
+        let n = 5;
+        let (tx, rx) = futures::sync::mpsc::channel(2 * n);
         let (trigger, tripwire) = Tripwire::new();
 
         let dir = tempdir().unwrap();
@@ -245,7 +265,6 @@ mod tests {
         rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
 
         let path = dir.path().join("file");
-        let n = 5;
         let mut file = File::create(&path).unwrap();
 
         sleep(); // The files must be observed at its original length before writing to it
@@ -265,9 +284,12 @@ mod tests {
             writeln!(&mut file, "posttrunc {}", i).unwrap();
         }
 
-        let received = rx.take(n * 2).collect().wait().unwrap();
+        sleep();
+
         drop(trigger);
         shutdown_on_idle(rt);
+
+        let received = wait_with_timeout(rx.collect());
 
         let mut i = 0;
         let mut pre_trunc = true;
@@ -296,7 +318,8 @@ mod tests {
 
     #[test]
     fn file_rotate() {
-        let (tx, rx) = futures::sync::mpsc::channel(10);
+        let n = 5;
+        let (tx, rx) = futures::sync::mpsc::channel(2 * n);
         let (trigger, tripwire) = Tripwire::new();
 
         let dir = tempdir().unwrap();
@@ -312,7 +335,6 @@ mod tests {
 
         let path = dir.path().join("file");
         let archive_path = dir.path().join("file");
-        let n = 5;
         let mut file = File::create(&path).unwrap();
 
         sleep(); // The files must be observed at its original length before writing to it
@@ -332,9 +354,12 @@ mod tests {
             writeln!(&mut file, "postrot {}", i).unwrap();
         }
 
-        let received = rx.take(n * 2).collect().wait().unwrap();
+        sleep();
+
         drop(trigger);
         shutdown_on_idle(rt);
+
+        let received = wait_with_timeout(rx.collect());
 
         let mut i = 0;
         let mut pre_rot = true;
@@ -363,7 +388,8 @@ mod tests {
 
     #[test]
     fn file_multiple_paths() {
-        let (tx, rx) = futures::sync::mpsc::channel(10);
+        let n = 5;
+        let (tx, rx) = futures::sync::mpsc::channel(4 * n);
         let (trigger, tripwire) = Tripwire::new();
 
         let dir = tempdir().unwrap();
@@ -383,7 +409,6 @@ mod tests {
         let path2 = dir.path().join("b.txt");
         let path3 = dir.path().join("a.log");
         let path4 = dir.path().join("a.ignore.txt");
-        let n = 5;
         let mut file1 = File::create(&path1).unwrap();
         let mut file2 = File::create(&path2).unwrap();
         let mut file3 = File::create(&path3).unwrap();
@@ -398,9 +423,12 @@ mod tests {
             writeln!(&mut file4, "4 {}", i).unwrap();
         }
 
-        let received = rx.take(n * 3).collect().wait().unwrap();
+        sleep();
+
         drop(trigger);
         shutdown_on_idle(rt);
+
+        let received = wait_with_timeout(rx.collect());
 
         let mut is = [0; 3];
 
@@ -444,7 +472,9 @@ mod tests {
 
             writeln!(&mut file, "hello there").unwrap();
 
-            let received = rx.into_future().wait().unwrap().0.unwrap();
+            sleep();
+
+            let received = wait_with_timeout(rx.into_future()).0.unwrap();
             assert_eq!(
                 received.as_log()[&"file".into()].to_string_lossy(),
                 path.to_str().unwrap()
@@ -472,7 +502,9 @@ mod tests {
 
             writeln!(&mut file, "hello there").unwrap();
 
-            let received = rx.into_future().wait().unwrap().0.unwrap();
+            sleep();
+
+            let received = wait_with_timeout(rx.into_future()).0.unwrap();
             assert_eq!(
                 received.as_log()[&"source".into()].to_string_lossy(),
                 path.to_str().unwrap()
@@ -500,7 +532,9 @@ mod tests {
 
             writeln!(&mut file, "hello there").unwrap();
 
-            let received = rx.into_future().wait().unwrap().0.unwrap();
+            sleep();
+
+            let received = wait_with_timeout(rx.into_future()).0.unwrap();
             assert_eq!(
                 received.as_log().keys().cloned().collect::<HashSet<_>>(),
                 vec![
@@ -543,7 +577,9 @@ mod tests {
             sleep();
 
             drop(trigger);
-            let received = rx.collect().wait().unwrap();
+            shutdown_on_idle(rt);
+
+            let received = wait_with_timeout(rx.collect());
             let lines = received
                 .into_iter()
                 .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
@@ -577,7 +613,9 @@ mod tests {
             sleep();
 
             drop(trigger);
-            let received = rx.collect().wait().unwrap();
+            shutdown_on_idle(rt);
+
+            let received = wait_with_timeout(rx.collect());
             let lines = received
                 .into_iter()
                 .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
@@ -649,7 +687,9 @@ mod tests {
             sleep();
 
             drop(trigger);
-            let received = rx.collect().wait().unwrap();
+            shutdown_on_idle(rt);
+
+            let received = wait_with_timeout(rx.collect());
             let before_lines = received
                 .iter()
                 .filter(|event| {
@@ -716,11 +756,10 @@ mod tests {
         drop(trigger);
         shutdown_on_idle(rt);
 
-        let received = rx
-            .map(|event| event.as_log().get(&event::MESSAGE).unwrap().clone())
-            .collect()
-            .wait()
-            .unwrap();
+        let received = wait_with_timeout(
+            rx.map(|event| event.as_log().get(&event::MESSAGE).unwrap().clone())
+                .collect(),
+        );
 
         assert_eq!(
             received,
