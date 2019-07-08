@@ -3,7 +3,7 @@ use bytes::Bytes;
 use file_source::FileServer;
 use futures::{future, sync::mpsc, Future, Sink};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime};
 use tracing::{dispatcher, field};
@@ -21,8 +21,6 @@ pub struct FileConfig {
     pub fingerprint_bytes: usize,
     pub ignored_header_bytes: usize,
     pub host_key: Option<String>,
-    //    #[serde(default)]
-    //    pub data_dir: Option<PathBuf>,
 }
 
 fn default_max_line_bytes() -> usize {
@@ -47,13 +45,24 @@ impl Default for FileConfig {
 
 #[typetag::serde(name = "file")]
 impl crate::topology::config::SourceConfig for FileConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         // TODO: validate paths
-        Ok(file_source(self, out))
+        let data_dir = data_dir
+            .as_ref()
+            .ok_or_else(|| "Must set data_dir to use file source.".to_string())?;
+        Ok(file_source(self, &data_dir, out))
     }
 }
 
-pub fn file_source(config: &FileConfig, out: mpsc::Sender<Event>) -> super::Source {
+pub fn file_source(
+    config: &FileConfig,
+    data_dir: &Path,
+    out: mpsc::Sender<Event>,
+) -> super::Source {
     let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
 
     let ignore_before = config
@@ -69,6 +78,7 @@ pub fn file_source(config: &FileConfig, out: mpsc::Sender<Event>) -> super::Sour
         max_line_bytes: config.max_line_bytes,
         fingerprint_bytes: config.fingerprint_bytes,
         ignored_header_bytes: config.ignored_header_bytes,
+        data_dir: data_dir.to_path_buf(),
     };
 
     let file_key = config.file_key.clone();
@@ -152,7 +162,6 @@ mod tests {
     fn test_default_file_config() -> file::FileConfig {
         file::FileConfig {
             fingerprint_bytes: 8,
-            //data_dir: tempdir().ok(),
             ..Default::default()
         }
     }
@@ -164,8 +173,10 @@ mod tests {
         E: Send + 'static + std::fmt::Debug,
     {
         let result = block_on(future.timeout(Duration::from_secs(5)));
-        assert!(result.is_ok(),
-                "Unclosed channel: may indicate file-server could not shutdown gracefully.");
+        assert!(
+            result.is_ok(),
+            "Unclosed channel: may indicate file-server could not shutdown gracefully."
+        );
         result.unwrap()
     }
 
@@ -196,8 +207,8 @@ mod tests {
             include: vec![dir.path().join("*")],
             ..test_default_file_config()
         };
-
-        let source = file::file_source(&config, tx);
+        let data_dir = tempdir().unwrap();
+        let source = file::file_source(&config, data_dir.path(), tx);
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -258,7 +269,8 @@ mod tests {
             include: vec![dir.path().join("*")],
             ..test_default_file_config()
         };
-        let source = file::file_source(&config, tx);
+        let data_dir = tempdir().unwrap();
+        let source = file::file_source(&config, data_dir.path(), tx);
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -327,7 +339,8 @@ mod tests {
             include: vec![dir.path().join("*")],
             ..test_default_file_config()
         };
-        let source = file::file_source(&config, tx);
+        let data_dir = tempdir().unwrap();
+        let source = file::file_source(&config, data_dir.path(), tx);
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -398,8 +411,8 @@ mod tests {
             exclude: vec![dir.path().join("a.*.txt")],
             ..test_default_file_config()
         };
-
-        let source = file::file_source(&config, tx);
+        let data_dir = tempdir().unwrap();
+        let source = file::file_source(&config, data_dir.path(), tx);
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -460,8 +473,8 @@ mod tests {
                 include: vec![dir.path().join("*")],
                 ..test_default_file_config()
             };
-
-            let source = file::file_source(&config, tx);
+            let data_dir = tempdir().unwrap();
+            let source = file::file_source(&config, data_dir.path(), tx);
 
             rt.spawn(source.select(tripwire.clone()).map(|_| ()).map_err(|_| ()));
 
@@ -490,8 +503,8 @@ mod tests {
                 file_key: Some("source".to_string()),
                 ..test_default_file_config()
             };
-
-            let source = file::file_source(&config, tx);
+            let data_dir = tempdir().unwrap();
+            let source = file::file_source(&config, data_dir.path(), tx);
 
             rt.spawn(source.select(tripwire.clone()).map(|_| ()).map_err(|_| ()));
 
@@ -520,8 +533,8 @@ mod tests {
                 file_key: None,
                 ..test_default_file_config()
             };
-
-            let source = file::file_source(&config, tx);
+            let data_dir = tempdir().unwrap();
+            let source = file::file_source(&config, data_dir.path(), tx);
 
             rt.spawn(source.select(tripwire.clone()).map(|_| ()).map_err(|_| ()));
 
@@ -555,72 +568,93 @@ mod tests {
     fn file_start_position() {
         // Default (start from end)
         {
-            let mut rt = tokio::runtime::Runtime::new().unwrap();
-            let (tx, rx) = futures::sync::mpsc::channel(10);
-            let (trigger, tripwire) = Tripwire::new();
             let dir = tempdir().unwrap();
             let config = file::FileConfig {
                 include: vec![dir.path().join("*")],
                 ..test_default_file_config()
             };
-
-            let source = file::file_source(&config, tx);
-
-            rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
+            let data_dir = tempdir().unwrap();
 
             let path = dir.path().join("file");
             let mut file = File::create(&path).unwrap();
 
-            writeln!(&mut file, "first line").unwrap();
-            sleep();
-            writeln!(&mut file, "second line").unwrap();
-            sleep();
+            // First run of server
+            {
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                let (tx, rx) = futures::sync::mpsc::channel(10);
+                let (trigger, tripwire) = Tripwire::new();
 
-            drop(trigger);
-            shutdown_on_idle(rt);
+                let source = file::file_source(&config, data_dir.path(), tx);
 
-            let received = wait_with_timeout(rx.collect());
-            let lines = received
-                .into_iter()
-                .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
-                .collect::<Vec<_>>();
-            assert_eq!(lines, vec!["second line"]);
-        }
+                rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
 
-        // Start from beginning
-        {
-            let mut rt = tokio::runtime::Runtime::new().unwrap();
-            let (tx, rx) = futures::sync::mpsc::channel(10);
-            let (trigger, tripwire) = Tripwire::new();
-            let dir = tempdir().unwrap();
-            let config = file::FileConfig {
-                include: vec![dir.path().join("*")],
-                start_at_beginning: true,
-                ..test_default_file_config()
-            };
+                sleep();
+                writeln!(&mut file, "first line").unwrap();
+                sleep();
 
-            let source = file::file_source(&config, tx);
+                drop(trigger);
+                shutdown_on_idle(rt);
 
-            rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
+                let received = wait_with_timeout(rx.collect());
+                let lines = received
+                    .into_iter()
+                    .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
+                    .collect::<Vec<_>>();
+                assert_eq!(lines, vec!["first line"]);
+            }
+            // Server restarted
+            {
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                let (tx, rx) = futures::sync::mpsc::channel(10);
+                let (trigger, tripwire) = Tripwire::new();
 
-            let path = dir.path().join("file");
-            let mut file = File::create(&path).unwrap();
+                let source = file::file_source(&config, data_dir.path(), tx);
 
-            writeln!(&mut file, "first line").unwrap();
-            sleep();
-            writeln!(&mut file, "second line").unwrap();
+                rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
 
-            sleep();
+                sleep();
+                writeln!(&mut file, "second line").unwrap();
+                sleep();
 
-            drop(trigger);
-            shutdown_on_idle(rt);
+                drop(trigger);
+                shutdown_on_idle(rt);
 
-            let received = wait_with_timeout(rx.collect());
-            let lines = received
-                .into_iter()
-                .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
-                .collect::<Vec<_>>();
-            assert_eq!(lines, vec!["first line", "second line"]);
+                let received = wait_with_timeout(rx.collect());
+                let lines = received
+                    .into_iter()
+                    .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
+                    .collect::<Vec<_>>();
+                assert_eq!(lines, vec!["second line"]);
+            }
+            // Server restarted again, but this time start_at_beginning=true.
+            {
+                let mut rt = tokio::runtime::Runtime::new().unwrap();
+                let (tx, rx) = futures::sync::mpsc::channel(10);
+                let (trigger, tripwire) = Tripwire::new();
+
+                let config = file::FileConfig {
+                    include: vec![dir.path().join("*")],
+                    start_at_beginning: true, // override default behaviour
+                    ..test_default_file_config()
+                };
+                let source = file::file_source(&config, data_dir.path(), tx);
+
+                rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
+
+                sleep();
+                writeln!(&mut file, "third line").unwrap();
+                sleep();
+
+                drop(trigger);
+                shutdown_on_idle(rt);
+
+                let received = wait_with_timeout(rx.collect());
+                let lines = received
+                    .into_iter()
+                    .map(|event| event.as_log()[&event::MESSAGE].to_string_lossy())
+                    .collect::<Vec<_>>();
+                assert_eq!(lines, vec!["first line", "second line", "third line"]);
+            }
         }
 
         // Start from beginning (but ignore old files)
@@ -638,10 +672,8 @@ mod tests {
                 ignore_older: Some(1000),
                 ..test_default_file_config()
             };
-
-            let source = file::file_source(&config, tx);
-
-            rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
+            let data_dir = tempdir().unwrap();
+            let source = file::file_source(&config, data_dir.path(), tx);
 
             let before_path = dir.path().join("before");
             let mut before_file = File::create(&before_path).unwrap();
@@ -679,6 +711,8 @@ mod tests {
                     libc::futimes(after_file.as_raw_fd(), after_times.as_ptr());
                 }
             }
+
+            rt.spawn(source.select(tripwire).map(|_| ()).map_err(|_| ()));
 
             sleep();
             writeln!(&mut before_file, "second line").unwrap();
@@ -724,8 +758,8 @@ mod tests {
             max_line_bytes: 10,
             ..test_default_file_config()
         };
-
-        let source = file::file_source(&config, tx);
+        let data_dir = tempdir().unwrap();
+        let source = file::file_source(&config, data_dir.path(), tx);
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
 

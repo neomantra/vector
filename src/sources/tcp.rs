@@ -5,6 +5,7 @@ use codec::{self, BytesDelimitedCodec};
 use futures::sync::mpsc;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use string_cache::DefaultAtom as Atom;
 use tracing::field;
 
@@ -40,7 +41,11 @@ impl TcpConfig {
 
 #[typetag::serde(name = "tcp")]
 impl crate::topology::config::SourceConfig for TcpConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         let tcp = RawTcpSource {
             config: self.clone(),
         };
@@ -98,7 +103,7 @@ mod test {
 
         let addr = next_addr();
 
-        let server = TcpConfig::new(addr).build(tx).unwrap();
+        let server = TcpConfig::new(addr).build(&None, tx).unwrap();
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(server);
         wait_for_tcp(addr);
@@ -140,7 +145,7 @@ mod test {
         let mut config = TcpConfig::new(addr);
         config.max_length = 10;
 
-        let server = config.build(tx).unwrap();
+        let server = config.build(&None, tx).unwrap();
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(server);
         wait_for_tcp(addr);

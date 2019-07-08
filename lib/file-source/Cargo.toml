@@ -9,9 +9,11 @@ publish = false
 bytes = { version = "0.4.10", features = ["serde"] }
 crc = "1.8.1"
 glob = "0.2.11"
+memchr = "2.2.0"
+scan_fmt = "0.2.3"
 futures = "0.1.25"
 tracing = "0.1"
 
 [dev-dependencies]
-tempdir = "0.3"
 quickcheck = "0.6"
+tempfile = "3.1.0"

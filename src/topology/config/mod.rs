@@ -25,7 +25,11 @@ pub enum DataType {
 
 #[typetag::serde(tag = "type")]
 pub trait SourceConfig: core::fmt::Debug {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<sources::Source, String>;
+    fn build(
+        &self,
+        data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<sources::Source, String>;
 
     fn output_type(&self) -> DataType {
         DataType::Log

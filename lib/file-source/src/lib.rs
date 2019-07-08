@@ -1,14 +1,18 @@
 #[macro_use]
+extern crate scan_fmt;
+#[macro_use]
 extern crate tracing;
 
-pub mod file_server;
+mod file_server;
 mod file_watcher;
+type FileFingerprint = u64;
+type FilePosition = u64;
 
 pub use self::file_server::FileServer;
 
 #[cfg(test)]
 mod test {
-    extern crate tempdir;
+    extern crate tempfile;
 
     use self::file_watcher::FileWatcher;
     use super::*;
@@ -199,11 +203,14 @@ mod test {
     // time, recording the total number of reads/writes. The SUT reads should be
     // bounded below by the model reads, bounded above by the writes.
     fn experiment(actions: Vec<FWAction>) {
-        let dir = tempdir::TempDir::new("file_watcher_qc").unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("a_file.log");
         let mut fp = fs::File::create(&path).expect("could not create");
         let mut fp_id = file_id(&fp);
-        let mut fw = FileWatcher::new(path.clone(), false, None).expect("must be able to create");
+        let file_position = 0;
+        let ignore_before = None;
+        let mut fw = FileWatcher::new(path.clone(), file_position, ignore_before)
+            .expect("must be able to create");
 
         let mut writes = 0;
         let mut sut_reads = 0;
@@ -292,10 +299,13 @@ mod test {
     // model and SUT should agree exactly. To that end, we confirm that every
     // read from SUT exactly matches the reads from the model.
     fn experiment_no_truncations(actions: Vec<FWAction>) {
-        let dir = tempdir::TempDir::new("file_watcher_qc").unwrap();
+        let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("a_file.log");
         let mut fp = fs::File::create(&path).expect("could not create");
-        let mut fw = FileWatcher::new(path.clone(), false, None).expect("must be able to create");
+        let file_position = 0;
+        let ignore_before = None;
+        let mut fw = FileWatcher::new(path.clone(), file_position, ignore_before)
+            .expect("must be able to create");
 
         let mut fwfiles: Vec<FWFile> = vec![];
         fwfiles.push(FWFile::new());

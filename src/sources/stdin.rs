@@ -6,6 +6,7 @@ use bytes::Bytes;
 use codec::BytesDelimitedCodec;
 use futures::{future, sync::mpsc, Future, Sink, Stream};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tokio::{
     codec::FramedRead,
     io::{stdin, AsyncRead},
@@ -34,7 +35,11 @@ fn default_max_length() -> usize {
 
 #[typetag::serde(name = "stdin")]
 impl SourceConfig for StdinConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         Ok(stdin_source(stdin(), self.clone(), out))
     }
 }

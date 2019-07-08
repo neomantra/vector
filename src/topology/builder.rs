@@ -32,7 +32,7 @@ pub fn build_pieces(config: &super::Config) -> Result<(Pieces, Vec<String>), Vec
     for (name, source) in &config.sources {
         let (tx, rx) = mpsc::channel(1000);
 
-        let server = match source.build(tx) {
+        let server = match source.build(&config.data_dir, tx) {
             Err(error) => {
                 errors.push(format!("Transform \"{}\": {}", name, error));
                 continue;

@@ -5,6 +5,7 @@ use futures::sync::mpsc;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::codec::LengthDelimitedCodec;
 use tracing::field;
 
@@ -31,7 +32,11 @@ impl VectorConfig {
 
 #[typetag::serde(name = "vector")]
 impl crate::topology::config::SourceConfig for VectorConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         let vector = VectorSource;
         vector.run(self.address, self.shutdown_timeout_secs, out)
     }
@@ -81,7 +86,7 @@ mod test {
         let (tx, rx) = mpsc::channel(100);
 
         let addr = next_addr();
-        let server = VectorConfig::new(addr.clone()).build(tx).unwrap();
+        let server = VectorConfig::new(addr.clone()).build(&None, tx).unwrap();
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.spawn(server);
         wait_for_tcp(addr);

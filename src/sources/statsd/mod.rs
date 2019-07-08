@@ -3,6 +3,7 @@ use futures::{future, sync::mpsc, Future, Sink, Stream};
 use parser::parse;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tokio::{
     self,
     codec::BytesCodec,
@@ -19,7 +20,11 @@ struct StatsdConfig {
 
 #[typetag::serde(name = "statsd")]
 impl crate::topology::config::SourceConfig for StatsdConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         Ok(statsd(self.address.clone(), out))
     }
 

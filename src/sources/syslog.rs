@@ -50,7 +50,11 @@ impl SyslogConfig {
 
 #[typetag::serde(name = "syslog")]
 impl crate::topology::config::SourceConfig for SyslogConfig {
-    fn build(&self, out: mpsc::Sender<Event>) -> Result<super::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        out: mpsc::Sender<Event>,
+    ) -> Result<super::Source, String> {
         let host_key = self.host_key.clone().unwrap_or(event::HOST.to_string());
 
         match self.mode.clone() {

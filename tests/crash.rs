@@ -1,5 +1,6 @@
 use futures::{future, sync::mpsc, Async, AsyncSink, Sink, Stream};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use vector::buffers::Acker;
 use vector::test_util::{
     block_on, next_addr, random_lines, receive, send_lines, shutdown_on_idle, wait_for_tcp,
@@ -142,7 +143,11 @@ struct ErrorSourceConfig;
 
 #[typetag::serde(name = "tcp")]
 impl vector::topology::config::SourceConfig for ErrorSourceConfig {
-    fn build(&self, _out: mpsc::Sender<Event>) -> Result<sources::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        _out: mpsc::Sender<Event>,
+    ) -> Result<sources::Source, String> {
         Ok(Box::new(future::err(())))
     }
 }
@@ -190,7 +195,11 @@ struct PanicSourceConfig;
 
 #[typetag::serde(name = "tcp")]
 impl vector::topology::config::SourceConfig for PanicSourceConfig {
-    fn build(&self, _out: mpsc::Sender<Event>) -> Result<sources::Source, String> {
+    fn build(
+        &self,
+        _data_dir: &Option<PathBuf>,
+        _out: mpsc::Sender<Event>,
+    ) -> Result<sources::Source, String> {
         Ok(Box::new(future::lazy::<_, future::FutureResult<(), ()>>(
             || panic!(),
         )))
